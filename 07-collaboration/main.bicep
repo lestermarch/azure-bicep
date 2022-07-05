@@ -1,26 +1,12 @@
+@description('The environment into which resources will be deployed.')
+@allowed([
+  'nonprod'
+  'prod'
+])
+param envrionemnt string = 'nonprod'
+
 @description('The Azure region into which resources will be deployed.')
 param location string = resourceGroup().location
-
-@description('The SKU of the product manuals Storage Account.')
-@allowed([
-  'F1'
-  'D1'
-  'B1'
-  'B2'
-  'B3'
-  'S1'
-  'S2'
-  'S3'
-  'P1'
-  'P2'
-  'P3'
-  'P4'
-])
-param storageAccountSkuName string = 'F1'
-
-@description('The capacity of the product manuals Storage Account.')
-@minValue(1)
-param storageAccountSkuCapacity int = 1
 
 @description('The administrator username for the SQL Server.')
 param sqlAdministratorLogin string
@@ -47,6 +33,34 @@ var appServicePlanName = 'asp-${uniqueString(resourceGroup().id)}'
 @description('The role to be assigned to the managed identity for this workload.')
 var roleDefinitionId = 'b24988ac-6180-42a0-ab88-20f7382dd24c' // Contributor
 
+@description('A map of resource configurations per environment type.')
+var environmentConfigurationMap = {
+  prod: {
+    appServicePlan: {
+      skuName: 'S1'
+      instanceCount: 2
+    }
+    storageAccount: {
+      skuName: 'Standard_GRS'
+    }
+    sqlDatabase: {
+      skuName: 'S1'
+    }
+  }
+  nonprod: {
+    appServicePlan: {
+      skuName: 'F1'
+      instanceCount: 1
+    }
+    storageAccount: {
+      skuName: 'Standard_LRS'
+    }
+    sqlDatabase: {
+      skuName: 'Basic'
+    }
+  }
+}
+
 @description('The name of the SQL Server to be deployed for this workload.')
 var sqlserverName = 'sql-${uniqueString(resourceGroup().id)}'
 
@@ -55,9 +69,9 @@ var storageAccountName = 'toywebsite${uniqueString(resourceGroup().id)}'
 
 resource storageAccount 'Microsoft.Storage/storageAccounts@2019-06-01' = {
   name: storageAccountName
-  location: 'eastus'
+  location: location
   sku: {
-    name: 'Standard_LRS'
+    name: environmentConfigurationMap[envrionemnt].storageAccount.skuName
   }
   kind: 'StorageV2'
   properties: {
@@ -89,7 +103,7 @@ resource sqlserverName_databaseName 'Microsoft.Sql/servers/databases@2020-08-01-
   name: '${sqlserver.name}/${databaseName}'
   location: location
   sku: {
-    name: 'Basic'
+    name: environmentConfigurationMap[envrionemnt].sqlDatabase.skuName
   }
   properties: {
     collation: 'SQL_Latin1_General_CP1_CI_AS'
@@ -111,12 +125,13 @@ resource sqlserverName_AllowAllAzureIPs 'Microsoft.Sql/servers/firewallRules@201
 resource productmanuals 'Microsoft.Storage/storageAccounts/blobServices/containers@2019-06-01' = {
   name: '${storageAccount.name}/default/${productmanualsName}'
 }
+
 resource hostingPlan 'Microsoft.Web/serverfarms@2020-06-01' = {
   name: appServicePlanName
   location: location
   sku: {
-    name: storageAccountSkuName
-    capacity: storageAccountSkuCapacity
+    name: environmentConfigurationMap[envrionemnt].appServicePlan.skuName
+    capacity: environmentConfigurationMap[envrionemnt].appServicePlan.instanceCount
   }
 }
 
