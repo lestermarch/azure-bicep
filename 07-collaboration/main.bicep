@@ -1,5 +1,7 @@
+@description('The Azure region into which resources will be deployed.')
 param location string = resourceGroup().location
 
+@description('The SKU of the product manuals Storage Account.')
 @allowed([
   'F1'
   'D1'
@@ -14,23 +16,41 @@ param location string = resourceGroup().location
   'P3'
   'P4'
 ])
-param skuName string = 'F1'
+param storageAccountSkuName string = 'F1'
 
+@description('The capacity of the product manuals Storage Account.')
 @minValue(1)
-param skuCapacity int = 1
+param storageAccountSkuCapacity int = 1
+
+@description('The administrator username for the SQL Server.')
 param sqlAdministratorLogin string
 
+@description('The administrator password for the SQL Server.')
 @secure()
 param sqlAdministratorLoginPassword string
 
-param managedIdentityName string
-param roleDefinitionId string = 'b24988ac-6180-42a0-ab88-20f7382dd24c'
-param webSiteName string = 'webSite${uniqueString(resourceGroup().id)}'
+@description('The name of the managed identity to use for this workload.')
+param managedIdentityName string = 'msi-${uniqueString(resourceGroup().id)}'
+
+@description('The globally unique App Service app name.')
+param webSiteName string = 'app-${uniqueString(resourceGroup().id)}'
+
+@description('The default Storage Account container name.')
 param container1Name string = 'productspecs'
+
+@description('The Storage Account subcontainer name for product manuals.')
 param productmanualsName string = 'productmanuals'
 
-var hostingPlanName = 'hostingplan${uniqueString(resourceGroup().id)}'
-var sqlserverName = 'toywebsite${uniqueString(resourceGroup().id)}'
+@description('The App Service Plan name to be deployed for this workload.')
+var appServicePlanName = 'asp-${uniqueString(resourceGroup().id)}'
+
+@description('The role to be assigned to the managed identity for this workload.')
+var roleDefinitionId = 'b24988ac-6180-42a0-ab88-20f7382dd24c' // Contributor
+
+@description('The name of the SQL Server to be deployed for this workload.')
+var sqlserverName = 'sql-${uniqueString(resourceGroup().id)}'
+
+@description('The Storage Account name to be used for this workload.')
 var storageAccountName = 'toywebsite${uniqueString(resourceGroup().id)}'
 
 resource storageAccount 'Microsoft.Storage/storageAccounts@2019-06-01' = {
@@ -92,11 +112,11 @@ resource productmanuals 'Microsoft.Storage/storageAccounts/blobServices/containe
   name: '${storageAccount.name}/default/${productmanualsName}'
 }
 resource hostingPlan 'Microsoft.Web/serverfarms@2020-06-01' = {
-  name: hostingPlanName
+  name: appServicePlanName
   location: location
   sku: {
-    name: skuName
-    capacity: skuCapacity
+    name: storageAccountSkuName
+    capacity: storageAccountSkuCapacity
   }
 }
 
