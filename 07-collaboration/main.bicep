@@ -1,3 +1,9 @@
+/*==============================================
+  Parameters
+==============================================*/
+@description('The globally unique App Service app name.')
+param appServiceAppName string = 'app-${uniqueString(resourceGroup().id)}'
+
 @description('The environment into which resources will be deployed.')
 @allowed([
   'nonprod'
@@ -8,6 +14,9 @@ param envrionemnt string = 'nonprod'
 @description('The Azure region into which resources will be deployed.')
 param location string = resourceGroup().location
 
+@description('The name of the managed identity to use for this workload.')
+param managedIdentityName string = 'msi-${uniqueString(resourceGroup().id)}'
+
 @description('The administrator username for the SQL Server.')
 param sqlAdministratorLogin string
 
@@ -15,12 +24,20 @@ param sqlAdministratorLogin string
 @secure()
 param sqlAdministratorLoginPassword string
 
-@description('The name of the managed identity to use for this workload.')
-param managedIdentityName string = 'msi-${uniqueString(resourceGroup().id)}'
+@description('The name of the SQL Server to be deployed for this workload.')
+param sqlServerName string = 'sql-${uniqueString(resourceGroup().id)}'
 
-@description('The globally unique App Service app name.')
-param appServiceAppName string = 'app-${uniqueString(resourceGroup().id)}'
+@description('A list of tags to be applied to each resource.')
+param tags object = {
+  CostCenter: 'Marketing'
+  DataClassification: 'Public'
+  Owner: 'WebsiteTeam'
+  Environment: 'Production'
+}
 
+/*==============================================
+  Variables
+==============================================*/
 @description('The App Service Plan name to be deployed for this workload.')
 var appServicePlanName = 'asp-${uniqueString(resourceGroup().id)}'
 
@@ -59,13 +76,13 @@ var productContainers = [
 ]
 
 @description('The role to be assigned to the managed identity for this workload.')
-var roleDefinitionId = 'b24988ac-6180-42a0-ab88-20f7382dd24c' // Contributor
+var contributorRoleDefinitionId = 'b24988ac-6180-42a0-ab88-20f7382dd24c' 
 
 @description('The name of the SQL Server database.')
 var sqlDatabaseName = 'ToyCompanyWebsite'
 
-@description('The name of the SQL Server to be deployed for this workload.')
-var sqlServerName = 'sql-${uniqueString(resourceGroup().id)}'
+@description('The connection string for the Storage Account.')
+var storageAccountConnectionString = 'DefaultEndpointsProtocol=https;AccountName=${storageAccount.name};EndpointSuffix=${environment().suffixes.storage};AccountKey=${listKeys(storageAccount.id, storageAccount.apiVersion).keys[0].value}'
 
 @description('The Storage Account name to be used for this workload.')
 var storageAccountName = 'toywebsite${uniqueString(resourceGroup().id)}'
@@ -83,6 +100,7 @@ resource storageAccount 'Microsoft.Storage/storageAccounts@2019-06-01' = {
   properties: {
     accessTier: 'Hot'
   }
+  tags: tags
 
   resource blobServices 'blobServices' existing = {
     name: 'default'
@@ -105,6 +123,7 @@ resource sqlServer 'Microsoft.Sql/servers@2019-06-01-preview' = {
     administratorLoginPassword: sqlAdministratorLoginPassword
     version: '12.0'
   }
+  tags: tags
 }
 
 resource sqlDatabase 'Microsoft.Sql/servers/databases@2020-08-01-preview' = {
@@ -117,6 +136,7 @@ resource sqlDatabase 'Microsoft.Sql/servers/databases@2020-08-01-preview' = {
     collation: 'SQL_Latin1_General_CP1_CI_AS'
     maxSizeBytes: 1073741824
   }
+  tags: tags
 }
 
 resource sqlServerFirewallRule 'Microsoft.Sql/servers/firewallRules@2014-04-01' = {
@@ -125,9 +145,6 @@ resource sqlServerFirewallRule 'Microsoft.Sql/servers/firewallRules@2014-04-01' 
     endIpAddress: '0.0.0.0'
     startIpAddress: '0.0.0.0'
   }
-  dependsOn: [
-    sqlServer
-  ]
 }
 
 /*==============================================
@@ -140,6 +157,7 @@ resource appServicePlan 'Microsoft.Web/serverfarms@2020-06-01' = {
     name: environmentConfigurationMap[envrionemnt].appServicePlan.skuName
     capacity: environmentConfigurationMap[envrionemnt].appServicePlan.instanceCount
   }
+  tags: tags
 }
 
 resource appServiceApp 'Microsoft.Web/sites@2020-06-01' = {
@@ -155,7 +173,7 @@ resource appServiceApp 'Microsoft.Web/sites@2020-06-01' = {
         }
         {
           name: 'StorageAccountConnectionString'
-          value: 'DefaultEndpointsProtocol=https;AccountName=${storageAccount.name};EndpointSuffix=${environment().suffixes.storage};AccountKey=${listKeys(storageAccount.id, storageAccount.apiVersion).keys[0].value}'
+          value: storageAccountConnectionString
         }
       ]
     }
@@ -166,6 +184,7 @@ resource appServiceApp 'Microsoft.Web/sites@2020-06-01' = {
       '${managedServiceIdentity.id}': {}
     }
   }
+  tags: tags
 }
 
 resource appInsights 'Microsoft.Insights/components@2018-05-01-preview' = {
@@ -175,18 +194,8 @@ resource appInsights 'Microsoft.Insights/components@2018-05-01-preview' = {
   properties: {
     Application_Type: 'web'
   }
+  tags: tags
 }
-
-// We don't need this anymore. We use a managed identity to access the database instead.
-//resource webSiteConnectionStrings 'Microsoft.Web/sites/config@2020-06-01' = {
-//  name: '${webSite.name}/connectionstrings'
-//  properties: {
-//    DefaultConnection: {
-//      value: 'Data Source=tcp:${sqlserver.properties.fullyQualifiedDomainName},1433;Initial Catalog=${databaseName};User Id=${sqlAdministratorLogin}@${sqlserver.properties.fullyQualifiedDomainName};Password=${sqlAdministratorLoginPassword};'
-//      type: 'SQLAzure'
-//    }
-//  }
-//}
 
 /*==============================================
   Managed Identity and Role Assignment
@@ -194,14 +203,15 @@ resource appInsights 'Microsoft.Insights/components@2018-05-01-preview' = {
 resource managedServiceIdentity 'Microsoft.ManagedIdentity/userAssignedIdentities@2018-11-30' = {
   name: managedIdentityName
   location: location
+  tags: tags
 }
 
 resource managedIdentityRoleAssignment 'Microsoft.Authorization/roleAssignments@2020-04-01-preview' = {
-  name: guid(roleDefinitionId, resourceGroup().id)
+  name: guid(contributorRoleDefinitionId, resourceGroup().id)
 
   properties: {
     principalType: 'ServicePrincipal'
-    roleDefinitionId: subscriptionResourceId('Microsoft.Authorization/roleDefinitions', roleDefinitionId)
+    roleDefinitionId: subscriptionResourceId('Microsoft.Authorization/roleDefinitions', contributorRoleDefinitionId)
     principalId: managedServiceIdentity.properties.principalId
   }
 }
