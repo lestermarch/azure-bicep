@@ -21,12 +21,6 @@ param managedIdentityName string = 'msi-${uniqueString(resourceGroup().id)}'
 @description('The globally unique App Service app name.')
 param appServiceAppName string = 'app-${uniqueString(resourceGroup().id)}'
 
-@description('The default Storage Account container name.')
-param storageAccountContainerName string = 'productspecs'
-
-@description('The Storage Account subcontainer name for product manuals.')
-param productManualsStorageContainerName string = 'productmanuals'
-
 @description('The App Service Plan name to be deployed for this workload.')
 var appServicePlanName = 'asp-${uniqueString(resourceGroup().id)}'
 
@@ -57,6 +51,12 @@ var environmentConfigurationMap = {
     }
   }
 }
+
+@description('A list of Storage Account containers to be created for this workload.')
+var productContainers = [
+  'productspecs'
+  'productmanuals'
+]
 
 @description('The role to be assigned to the managed identity for this workload.')
 var roleDefinitionId = 'b24988ac-6180-42a0-ab88-20f7382dd24c' // Contributor
@@ -89,14 +89,10 @@ resource storageAccount 'Microsoft.Storage/storageAccounts@2019-06-01' = {
   }
 }
 
-resource storageAccountContainer 'Microsoft.Storage/storageAccounts/blobServices/containers@2019-06-01' = {
+resource productStorageAccountContainer 'Microsoft.Storage/storageAccounts/blobServices/containers@2019-06-01' = [for container in productContainers: {
   parent: storageAccount::blobServices
-  name: storageAccountContainerName
-}
-
-resource productManualsStorageContainer 'Microsoft.Storage/storageAccounts/blobServices/containers@2019-06-01' = {
-  name: '${storageAccount.name}/default/${productManualsStorageContainerName}'
-}
+  name: container
+}]
 
 /*==============================================
   SQL Server and Database
