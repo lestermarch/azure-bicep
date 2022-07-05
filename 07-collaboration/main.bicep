@@ -19,19 +19,16 @@ param sqlAdministratorLoginPassword string
 param managedIdentityName string = 'msi-${uniqueString(resourceGroup().id)}'
 
 @description('The globally unique App Service app name.')
-param webSiteName string = 'app-${uniqueString(resourceGroup().id)}'
+param appServiceAppName string = 'app-${uniqueString(resourceGroup().id)}'
 
 @description('The default Storage Account container name.')
-param container1Name string = 'productspecs'
+param storageAccountContainerName string = 'productspecs'
 
 @description('The Storage Account subcontainer name for product manuals.')
-param productmanualsName string = 'productmanuals'
+param productManualsStorageContainerName string = 'productmanuals'
 
 @description('The App Service Plan name to be deployed for this workload.')
 var appServicePlanName = 'asp-${uniqueString(resourceGroup().id)}'
-
-@description('The role to be assigned to the managed identity for this workload.')
-var roleDefinitionId = 'b24988ac-6180-42a0-ab88-20f7382dd24c' // Contributor
 
 @description('A map of resource configurations per environment type.')
 var environmentConfigurationMap = {
@@ -61,12 +58,21 @@ var environmentConfigurationMap = {
   }
 }
 
+@description('The role to be assigned to the managed identity for this workload.')
+var roleDefinitionId = 'b24988ac-6180-42a0-ab88-20f7382dd24c' // Contributor
+
+@description('The name of the SQL Server database.')
+var sqlDatabaseName = 'ToyCompanyWebsite'
+
 @description('The name of the SQL Server to be deployed for this workload.')
-var sqlserverName = 'sql-${uniqueString(resourceGroup().id)}'
+var sqlServerName = 'sql-${uniqueString(resourceGroup().id)}'
 
 @description('The Storage Account name to be used for this workload.')
 var storageAccountName = 'toywebsite${uniqueString(resourceGroup().id)}'
 
+/*==============================================
+  Storage Account and Containers
+==============================================*/
 resource storageAccount 'Microsoft.Storage/storageAccounts@2019-06-01' = {
   name: storageAccountName
   location: location
@@ -83,13 +89,20 @@ resource storageAccount 'Microsoft.Storage/storageAccounts@2019-06-01' = {
   }
 }
 
-resource container1 'Microsoft.Storage/storageAccounts/blobServices/containers@2019-06-01' = {
+resource storageAccountContainer 'Microsoft.Storage/storageAccounts/blobServices/containers@2019-06-01' = {
   parent: storageAccount::blobServices
-  name: container1Name
+  name: storageAccountContainerName
 }
 
-resource sqlserver 'Microsoft.Sql/servers@2019-06-01-preview' = {
-  name: sqlserverName
+resource productManualsStorageContainer 'Microsoft.Storage/storageAccounts/blobServices/containers@2019-06-01' = {
+  name: '${storageAccount.name}/default/${productManualsStorageContainerName}'
+}
+
+/*==============================================
+  SQL Server and Database
+==============================================*/
+resource sqlServer 'Microsoft.Sql/servers@2019-06-01-preview' = {
+  name: sqlServerName
   location: location
   properties: {
     administratorLogin: sqlAdministratorLogin
@@ -98,9 +111,8 @@ resource sqlserver 'Microsoft.Sql/servers@2019-06-01-preview' = {
   }
 }
 
-var databaseName = 'ToyCompanyWebsite'
-resource sqlserverName_databaseName 'Microsoft.Sql/servers/databases@2020-08-01-preview' = {
-  name: '${sqlserver.name}/${databaseName}'
+resource sqlDatabase 'Microsoft.Sql/servers/databases@2020-08-01-preview' = {
+  name: '${sqlServer.name}/${sqlDatabaseName}'
   location: location
   sku: {
     name: environmentConfigurationMap[envrionemnt].sqlDatabase.skuName
@@ -111,22 +123,21 @@ resource sqlserverName_databaseName 'Microsoft.Sql/servers/databases@2020-08-01-
   }
 }
 
-resource sqlserverName_AllowAllAzureIPs 'Microsoft.Sql/servers/firewallRules@2014-04-01' = {
-  name: '${sqlserver.name}/AllowAllAzureIPs'
+resource sqlServerFirewallRule 'Microsoft.Sql/servers/firewallRules@2014-04-01' = {
+  name: '${sqlServer.name}/AllowAllAzureIPs'
   properties: {
     endIpAddress: '0.0.0.0'
     startIpAddress: '0.0.0.0'
   }
   dependsOn: [
-    sqlserver
+    sqlServer
   ]
 }
 
-resource productmanuals 'Microsoft.Storage/storageAccounts/blobServices/containers@2019-06-01' = {
-  name: '${storageAccount.name}/default/${productmanualsName}'
-}
-
-resource hostingPlan 'Microsoft.Web/serverfarms@2020-06-01' = {
+/*==============================================
+  App Service Plan, App, and Insights
+==============================================*/
+resource appServicePlan 'Microsoft.Web/serverfarms@2020-06-01' = {
   name: appServicePlanName
   location: location
   sku: {
@@ -135,16 +146,16 @@ resource hostingPlan 'Microsoft.Web/serverfarms@2020-06-01' = {
   }
 }
 
-resource webSite 'Microsoft.Web/sites@2020-06-01' = {
-  name: webSiteName
+resource appServiceApp 'Microsoft.Web/sites@2020-06-01' = {
+  name: appServiceAppName
   location: location
   properties: {
-    serverFarmId: hostingPlan.id
+    serverFarmId: appServicePlan.id
     siteConfig: {
       appSettings: [
         {
           name: 'APPINSIGHTS_INSTRUMENTATIONKEY'
-          value: AppInsights_webSiteName.properties.InstrumentationKey
+          value: appInsights.properties.InstrumentationKey
         }
         {
           name: 'StorageAccountConnectionString'
@@ -156,8 +167,17 @@ resource webSite 'Microsoft.Web/sites@2020-06-01' = {
   identity: {
     type: 'UserAssigned'
     userAssignedIdentities: {
-      '${msi.id}': {}
+      '${managedServiceIdentity.id}': {}
     }
+  }
+}
+
+resource appInsights 'Microsoft.Insights/components@2018-05-01-preview' = {
+  name: 'AppInsights'
+  location: location
+  kind: 'web'
+  properties: {
+    Application_Type: 'web'
   }
 }
 
@@ -172,26 +192,20 @@ resource webSite 'Microsoft.Web/sites@2020-06-01' = {
 //  }
 //}
 
-resource msi 'Microsoft.ManagedIdentity/userAssignedIdentities@2018-11-30' = {
+/*==============================================
+  Managed Identity and Role Assignment
+==============================================*/
+resource managedServiceIdentity 'Microsoft.ManagedIdentity/userAssignedIdentities@2018-11-30' = {
   name: managedIdentityName
   location: location
 }
 
-resource roleassignment 'Microsoft.Authorization/roleAssignments@2020-04-01-preview' = {
+resource managedIdentityRoleAssignment 'Microsoft.Authorization/roleAssignments@2020-04-01-preview' = {
   name: guid(roleDefinitionId, resourceGroup().id)
 
   properties: {
     principalType: 'ServicePrincipal'
     roleDefinitionId: subscriptionResourceId('Microsoft.Authorization/roleDefinitions', roleDefinitionId)
-    principalId: msi.properties.principalId
-  }
-}
-
-resource AppInsights_webSiteName 'Microsoft.Insights/components@2018-05-01-preview' = {
-  name: 'AppInsights'
-  location: location
-  kind: 'web'
-  properties: {
-    Application_Type: 'web'
+    principalId: managedServiceIdentity.properties.principalId
   }
 }
